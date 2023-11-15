@@ -3,7 +3,7 @@ module github.com/choveylee/tdb
 go 1.21.1
 
 require (
-	github.com/choveylee/tlog v0.0.0-20221104025109-ffb6b11cecbe
+	github.com/choveylee/tlog v0.0.0-20231115064806-a1ec26572d92
 	github.com/uptrace/opentelemetry-go-extra/otelgorm v0.2.3
 	gorm.io/driver/mysql v1.5.2
 	gorm.io/gorm v1.25.5
