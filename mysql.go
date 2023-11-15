@@ -114,11 +114,11 @@ func NewMysqlClientWithLog(ctx context.Context, dsn string) (*MysqlClient, error
 	return mysqlClient, nil
 }
 
-func (p *MysqlClient) DB(ctx context.Context) *gorm.DB {
-	return p.db.WithContext(ctx)
-}
+func (p *MysqlClient) DB(ctx context.Context, runMode string) *gorm.DB {
+	if runMode == DebugMode {
+		return p.db.WithContext(ctx)
+	}
 
-func (p *MysqlClient) DebugDB(ctx context.Context) *gorm.DB {
 	return p.db.WithContext(ctx).Debug()
 }
 
