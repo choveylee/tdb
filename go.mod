@@ -4,6 +4,7 @@ go 1.21.1
 
 require (
 	github.com/choveylee/tlog v0.0.0-20231115064806-a1ec26572d92
+	github.com/go-redis/redis/v8 v8.11.5
 	github.com/uptrace/opentelemetry-go-extra/otelgorm v0.2.3
 	gorm.io/driver/mysql v1.5.2
 	gorm.io/gorm v1.25.5
@@ -12,11 +13,13 @@ require (
 require (
 	github.com/bytedance/sonic v1.10.2 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
+	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/chenzhuoyu/base64x v0.0.0-20230717121745-296ad89f973d // indirect
 	github.com/chenzhuoyu/iasm v0.9.1 // indirect
 	github.com/choveylee/tcfg v0.0.0-20231115020527-b8bdc45c86eb // indirect
 	github.com/choveylee/terror v0.0.0-20221105132813-997ba58d0bf1 // indirect
 	github.com/choveylee/ttrace v0.0.0-20231114034446-0971db4cbf51 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
 	github.com/getsentry/sentry-go v0.25.0 // indirect
