@@ -41,3 +41,7 @@ func NewRedisClient(ctx context.Context, address, password string, poolSize int)
 
 	return redisClient, nil
 }
+
+func (p *RedisClient) Client(ctx context.Context) *redis.Client {
+	return p.client.WithContext(ctx)
+}
