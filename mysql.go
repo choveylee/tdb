@@ -22,27 +22,33 @@ import (
 )
 
 type dbLogger struct {
-	EnableLog bool
+	LogLevel logger.LogLevel
 }
 
-func (l dbLogger) LogMode(level logger.LogLevel) logger.Interface {
-	return l
+func (l *dbLogger) LogMode(level logger.LogLevel) logger.Interface {
+	newLogger := *l
+
+	newLogger.LogLevel = level
+
+	return &newLogger
 }
 
 func (l dbLogger) Info(ctx context.Context, msg string, args ...interface{}) {
-	if l.EnableLog {
+	if l.LogLevel >= logger.Info {
 		tlog.I(ctx).Msgf(msg, args...)
 	}
 }
 
 func (l dbLogger) Warn(ctx context.Context, msg string, args ...interface{}) {
-	if l.EnableLog {
+	if l.LogLevel >= logger.Warn {
 		tlog.W(ctx).Msgf(msg, args...)
 	}
 }
 
 func (l dbLogger) Error(ctx context.Context, msg string, args ...interface{}) {
-	tlog.E(ctx).Msgf(msg, args...)
+	if l.LogLevel >= logger.Error {
+		tlog.E(ctx).Msgf(msg, args...)
+	}
 }
 
 func (l dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
@@ -53,11 +59,17 @@ func (l dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string,
 
 		tlog.I(ctx).Msgf("slow query sql: %s, latency: %s", rawSql, latency)
 	}
+
+	if l.LogLevel == logger.Error {
+		rawSql, _ := fc()
+
+		tlog.D(ctx).Msgf("raw sql: %s, latency: %s", rawSql, latency)
+	}
 }
 
 var _ logger.Interface = &dbLogger{}
 
-func openDB(ctx context.Context, dsn string, enableLog bool) (*gorm.DB, error) {
+func openDB(ctx context.Context, dsn string, logLevel logger.LogLevel) (*gorm.DB, error) {
 	dialector := mysql.Open(dsn)
 
 	otelPlugin := otelgorm.NewPlugin(
@@ -68,7 +80,7 @@ func openDB(ctx context.Context, dsn string, enableLog bool) (*gorm.DB, error) {
 
 	gormDB, err := gorm.Open(dialector, &gorm.Config{
 		Logger: &dbLogger{
-			EnableLog: enableLog,
+			LogLevel: logLevel,
 		},
 		NamingStrategy: schema.NamingStrategy{
 			SingularTable: false,
@@ -88,8 +100,8 @@ type MysqlClient struct {
 	db *gorm.DB
 }
 
-func NewMysqlClient(ctx context.Context, dsn string) (*MysqlClient, error) {
-	db, err := openDB(ctx, dsn, false)
+func NewMysqlClient(ctx context.Context, dsn string, logLevel logger.LogLevel) (*MysqlClient, error) {
+	db, err := openDB(ctx, dsn, logLevel)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +114,7 @@ func NewMysqlClient(ctx context.Context, dsn string) (*MysqlClient, error) {
 }
 
 func NewMysqlClientWithLog(ctx context.Context, dsn string) (*MysqlClient, error) {
-	gormDb, err := openDB(ctx, dsn, true)
+	gormDb, err := openDB(ctx, dsn, logger.Warn)
 	if err != nil {
 		return nil, err
 	}
