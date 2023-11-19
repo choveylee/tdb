@@ -116,10 +116,10 @@ func NewMysqlClientWithLog(ctx context.Context, dsn string) (*MysqlClient, error
 
 func (p *MysqlClient) DB(ctx context.Context, runMode string) *gorm.DB {
 	if runMode == DebugMode {
-		return p.db.WithContext(ctx)
+		return p.db.WithContext(ctx).Debug()
 	}
 
-	return p.db.WithContext(ctx).Debug()
+	return p.db.WithContext(ctx)
 }
 
 func (p *MysqlClient) SetMaxOpenConns(maxOpenConns int) error {
