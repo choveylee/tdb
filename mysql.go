@@ -100,8 +100,8 @@ type MysqlClient struct {
 	db *gorm.DB
 }
 
-func NewMysqlClient(ctx context.Context, dsn string, logLevel logger.LogLevel) (*MysqlClient, error) {
-	db, err := openDB(ctx, dsn, logLevel)
+func NewMysqlClient(ctx context.Context, dsn string) (*MysqlClient, error) {
+	db, err := openDB(ctx, dsn, logger.Error)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func NewMysqlClient(ctx context.Context, dsn string, logLevel logger.LogLevel) (
 }
 
 func NewMysqlClientWithLog(ctx context.Context, dsn string) (*MysqlClient, error) {
-	gormDb, err := openDB(ctx, dsn, logger.Warn)
+	gormDb, err := openDB(ctx, dsn, logger.Info)
 	if err != nil {
 		return nil, err
 	}
