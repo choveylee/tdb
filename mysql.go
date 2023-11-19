@@ -60,7 +60,7 @@ func (l dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string,
 		tlog.I(ctx).Msgf("slow query sql: %s, latency: %s", rawSql, latency)
 	}
 
-	if l.LogLevel == logger.Error {
+	if l.LogLevel == logger.Info {
 		rawSql, _ := fc()
 
 		tlog.D(ctx).Msgf("raw sql: %s, latency: %s", rawSql, latency)
