@@ -33,25 +33,25 @@ func (l *dbLogger) LogMode(level logger.LogLevel) logger.Interface {
 	return &newLogger
 }
 
-func (l dbLogger) Info(ctx context.Context, msg string, args ...interface{}) {
+func (l *dbLogger) Info(ctx context.Context, msg string, args ...interface{}) {
 	if l.LogLevel >= logger.Info {
 		tlog.I(ctx).Msgf(msg, args...)
 	}
 }
 
-func (l dbLogger) Warn(ctx context.Context, msg string, args ...interface{}) {
+func (l *dbLogger) Warn(ctx context.Context, msg string, args ...interface{}) {
 	if l.LogLevel >= logger.Warn {
 		tlog.W(ctx).Msgf(msg, args...)
 	}
 }
 
-func (l dbLogger) Error(ctx context.Context, msg string, args ...interface{}) {
+func (l *dbLogger) Error(ctx context.Context, msg string, args ...interface{}) {
 	if l.LogLevel >= logger.Error {
 		tlog.E(ctx).Msgf(msg, args...)
 	}
 }
 
-func (l dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+func (l *dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	latency := time.Since(begin)
 
 	if latency > time.Millisecond*500 {
@@ -68,6 +68,30 @@ func (l dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string,
 }
 
 var _ logger.Interface = &dbLogger{}
+
+func beforeMetricHook(db *gorm.DB) {
+	db.Set("metric_start_time", time.Now())
+}
+
+func afterMetricHook(db *gorm.DB) {
+	if db.Statement.Schema == nil || len(db.Statement.BuildClauses) == 0 {
+		return
+	}
+
+	sqlStatus := "SUCCESS"
+	if db.Statement.Error != nil {
+		sqlStatus = "FAILED"
+	}
+
+	if start, ok := db.Get("metric_start_time"); ok {
+		MysqlHistogram.Observe(
+			float64(time.Since(start.(time.Time)).Milliseconds()),
+			db.Statement.Schema.Table,
+			db.Statement.BuildClauses[0],
+			sqlStatus,
+		)
+	}
+}
 
 func openDB(ctx context.Context, dsn string, logLevel logger.LogLevel) (*gorm.DB, error) {
 	dialector := mysql.Open(dsn)
@@ -92,6 +116,15 @@ func openDB(ctx context.Context, dsn string, logLevel logger.LogLevel) (*gorm.DB
 	if err != nil {
 		return nil, err
 	}
+
+	_ = gormDB.Callback().Query().Before("gorm:query").Register("before_query_hook", beforeMetricHook)
+	_ = gormDB.Callback().Create().Before("gorm:create").Register("before_create_hook", beforeMetricHook)
+	_ = gormDB.Callback().Update().Before("gorm:update").Register("before_update_hook", beforeMetricHook)
+	_ = gormDB.Callback().Delete().Before("gorm:delete").Register("before_delete_hook", beforeMetricHook)
+	_ = gormDB.Callback().Query().After("gorm:query").Register("after_query_hook", afterMetricHook)
+	_ = gormDB.Callback().Create().After("gorm:create").Register("after_create_hook", afterMetricHook)
+	_ = gormDB.Callback().Update().After("gorm:update").Register("after_update_hook", afterMetricHook)
+	_ = gormDB.Callback().Delete().After("gorm:delete").Register("after_delete_hook", afterMetricHook)
 
 	return gormDB, nil
 }
