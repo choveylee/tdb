@@ -15,6 +15,7 @@ import (
 
 	// otelsarama "github.com/DataDog/dd-trace-go/contrib/IBM/sarama.v1"
 	"github.com/IBM/sarama"
+	"github.com/choveylee/tlog"
 )
 
 type KafkaAsyncSender struct {
@@ -38,6 +39,76 @@ func NewKafkaAsyncSender(ctx context.Context, addrs []string, config *sarama.Con
 	}
 
 	// producer = otelsarama.WrapSyncProducer(c.Config, producer)
+
+	return sender, nil
+}
+
+// AsyncSenderSuccessCallback  生产者所需要，异步发消息时候接口回调消息的函数类型
+type AsyncSenderSuccessCallback func([]byte, error)
+
+// AsyncSenderErrorCallback 生产者所需要，异步发消息时候接口回调消息的函数类型
+type AsyncSenderErrorCallback func(error)
+
+func NewKafkaAsyncSenderWithCallback(ctx context.Context, addrs []string, config *sarama.Config, topic string,
+	successCallback AsyncSenderSuccessCallback, errorCallback AsyncSenderErrorCallback) (*KafkaAsyncSender, error) {
+	producer, err := sarama.NewAsyncProducer(addrs, config)
+	if err != nil {
+		return nil, err
+	}
+
+	sender := &KafkaAsyncSender{
+		producer: producer,
+
+		topic: topic,
+	}
+
+	// producer = otelsarama.WrapSyncProducer(c.Config, producer)
+
+	if config != nil {
+		if config.Producer.Return.Successes {
+			sender.wg.Add(1)
+			go func() {
+				defer sender.wg.Done()
+				for {
+					select {
+					case msg, ok := <-producer.Successes():
+						if !ok {
+							tlog.I(context.Background()).Msgf("success events listener for topic %s stops: kafka producer is closed", topic)
+
+							return
+						}
+
+						data, err := msg.Value.Encode()
+
+						if successCallback != nil {
+							successCallback(data, err)
+						}
+					}
+				}
+			}()
+		}
+
+		if config.Producer.Return.Errors {
+			sender.wg.Add(1)
+			go func() {
+				defer sender.wg.Done()
+				for {
+					select {
+					case err, ok := <-producer.Errors():
+						if !ok {
+							tlog.I(context.Background()).Msgf("error events listener for topic %s stops: kafka producer is closed", topic)
+
+							return
+						}
+
+						if errorCallback != nil {
+							errorCallback(err)
+						}
+					}
+				}
+			}()
+		}
+	}
 
 	return sender, nil
 }
