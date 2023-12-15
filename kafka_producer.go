@@ -64,51 +64,52 @@ func NewKafkaAsyncSenderWithCallback(ctx context.Context, addrs []string, config
 
 	// producer = otelsarama.WrapSyncProducer(c.Config, producer)
 
-	if config != nil {
-		if config.Producer.Return.Successes {
-			sender.wg.Add(1)
-			go func() {
-				defer sender.wg.Done()
-				for {
-					select {
-					case msg, ok := <-producer.Successes():
-						if !ok {
-							tlog.I(context.Background()).Msgf("success events listener for topic %s stops: kafka producer is closed", topic)
-
-							return
-						}
-
-						data, err := msg.Value.Encode()
-
-						if successCallback != nil {
-							successCallback(data, err)
-						}
-					}
-				}
-			}()
-		}
-
-		if config.Producer.Return.Errors {
-			sender.wg.Add(1)
-			go func() {
-				defer sender.wg.Done()
-				for {
-					select {
-					case err, ok := <-producer.Errors():
-						if !ok {
-							tlog.I(context.Background()).Msgf("error events listener for topic %s stops: kafka producer is closed", topic)
-
-							return
-						}
-
-						if errorCallback != nil {
-							errorCallback(err)
-						}
-					}
-				}
-			}()
-		}
+	if config == nil {
+		config = sarama.NewConfig()
 	}
+
+	config.Producer.Return.Successes = true
+	config.Producer.Return.Errors = true
+
+	sender.wg.Add(1)
+	go func() {
+		defer sender.wg.Done()
+		for {
+			select {
+			case msg, ok := <-producer.Successes():
+				if !ok {
+					tlog.I(context.Background()).Msgf("success events listener for topic %s stops: kafka producer is closed", topic)
+
+					return
+				}
+
+				data, err := msg.Value.Encode()
+
+				if successCallback != nil {
+					successCallback(data, err)
+				}
+			}
+		}
+	}()
+
+	sender.wg.Add(1)
+	go func() {
+		defer sender.wg.Done()
+		for {
+			select {
+			case err, ok := <-producer.Errors():
+				if !ok {
+					tlog.I(context.Background()).Msgf("error events listener for topic %s stops: kafka producer is closed", topic)
+
+					return
+				}
+
+				if errorCallback != nil {
+					errorCallback(err)
+				}
+			}
+		}
+	}()
 
 	return sender, nil
 }
