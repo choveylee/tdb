@@ -71,15 +71,6 @@ func NewKafkaReceiver(ctx context.Context, addrs []string, config *sarama.Config
 		return nil, err
 	}
 
-	receiver := &KafkaReceiver{
-		client:        client,
-		consumerGroup: consumerGroup,
-
-		topic: topicId,
-
-		ready: make(chan struct{}),
-	}
-
 	connectBackOff := backoff.NewExponentialBackOff()
 	connectBackOff.RandomizationFactor = 0
 	connectBackOff.MaxElapsedTime = 0
@@ -89,6 +80,18 @@ func NewKafkaReceiver(ctx context.Context, addrs []string, config *sarama.Config
 	consumeBackOff.RandomizationFactor = 0
 	consumeBackOff.MaxElapsedTime = 0
 	consumeBackOff.MaxInterval = 30 * time.Second
+
+	receiver := &KafkaReceiver{
+		client:        client,
+		consumerGroup: consumerGroup,
+
+		topic: topicId,
+
+		connectBackOff: connectBackOff,
+		consumeBackOff: consumeBackOff,
+
+		ready: make(chan struct{}),
+	}
 
 	return receiver, nil
 }
