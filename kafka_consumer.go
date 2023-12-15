@@ -60,7 +60,7 @@ type KafkaReceiver struct {
 
 type ReceiverHandler func(context.Context, []byte) error
 
-func NewKafkaReceiver(ctx context.Context, addrs []string, config *sarama.Config, groupId string, topicId string, handler ReceiverHandler) (*KafkaReceiver, error) {
+func NewKafkaReceiver(ctx context.Context, addrs []string, config *sarama.Config, groupId string, topic string, handler ReceiverHandler) (*KafkaReceiver, error) {
 	client, err := sarama.NewClient(addrs, config)
 	if err != nil {
 		return nil, err
@@ -85,7 +85,11 @@ func NewKafkaReceiver(ctx context.Context, addrs []string, config *sarama.Config
 		client:        client,
 		consumerGroup: consumerGroup,
 
-		topic: topicId,
+		topic: topic,
+
+		consumeFunc: func(ctx context.Context, msg *sarama.ConsumerMessage) error {
+			return handler(ctx, msg.Value)
+		},
 
 		connectBackOff: connectBackOff,
 		consumeBackOff: consumeBackOff,
@@ -200,7 +204,8 @@ func (p *KafkaReceiver) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 				}()
 
 				defer func() {
-					if e := recover(); e != nil {
+					e := recover()
+					if e != nil {
 						err = fmt.Errorf("panic: %v", e)
 					}
 				}()
