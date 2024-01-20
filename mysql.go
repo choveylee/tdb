@@ -167,6 +167,14 @@ func (p *MysqlClient) DB(ctx context.Context, runMode string) *gorm.DB {
 	return p.db.WithContext(ctx)
 }
 
+func (p *MysqlClient) Tx(ctx context.Context, runMode string) *gorm.DB {
+	if runMode == DebugMode {
+		return p.db.WithContext(ctx).Debug().Begin()
+	}
+
+	return p.db.WithContext(ctx).Begin()
+}
+
 func (p *MysqlClient) SetMaxOpenConns(maxOpenConns int) error {
 	sqlDB, err := p.db.DB()
 	if err != nil {
