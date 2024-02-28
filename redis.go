@@ -12,7 +12,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 type RedisClient struct {
@@ -58,5 +58,5 @@ func NewRedisClient(ctx context.Context, address, password string, poolSize int)
 }
 
 func (p *RedisClient) Client(ctx context.Context) *redis.Client {
-	return p.client.WithContext(ctx)
+	return p.client
 }
