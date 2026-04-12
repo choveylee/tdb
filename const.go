@@ -1,17 +1,9 @@
-/**
- * @Author: lidonglin
- * @Description:
- * @File:  const.go
- * @Version: 1.0.0
- * @Date: 2023/11/15 14:09
- */
-
 package tdb
 
 const (
-	// DebugMode
+	// DebugMode selects verbose SQL logging: [MysqlClient.DB] and [MysqlClient.Tx] run the underlying GORM session in Debug mode.
 	DebugMode = "debug"
 
-	// ReleaseMode
+	// ReleaseMode is the default run mode without forcing GORM Debug on every statement.
 	ReleaseMode = "release"
 )

@@ -1,11 +1,3 @@
-/**
- * @Author: lidonglin
- * @Description:
- * @File:  kafka_receiver.go
- * @Version: 1.0.0
- * @Date: 2023/12/14 13:28
- */
-
 package tdb
 
 import (
@@ -20,14 +12,17 @@ import (
 	"github.com/choveylee/tlog"
 )
 
+// PermanentError wraps a handler failure that must not be retried; it participates in errors.Is matching.
 type PermanentError struct {
 	err error
 }
 
+// Error implements error and prefixes the message with a permanent-error marker.
 func (p *PermanentError) Error() string {
 	return "(permanent error)" + p.err.Error()
 }
 
+// Is supports errors.Is by detecting *PermanentError in the error chain.
 func (p *PermanentError) Is(err error) bool {
 	var permanentError *PermanentError
 
@@ -36,12 +31,15 @@ func (p *PermanentError) Is(err error) bool {
 	return ok
 }
 
+// NewPermanentError wraps err as a *PermanentError.
 func NewPermanentError(err error) *PermanentError {
 	return &PermanentError{err: err}
 }
 
+// ConsumeFunc processes a single Kafka message; nil means success.
 type ConsumeFunc func(context.Context, *sarama.ConsumerMessage) error
 
+// KafkaReceiver runs a Sarama consumer group with exponential backoff on reconnect and per-message retry.
 type KafkaReceiver struct {
 	client        sarama.Client
 	consumerGroup sarama.ConsumerGroup
@@ -58,16 +56,20 @@ type KafkaReceiver struct {
 	wg sync.WaitGroup
 }
 
+// ReceiverHandler is a simplified handler that receives only the message value; [NewKafkaReceiver] adapts it to [ConsumeFunc].
 type ReceiverHandler func(context.Context, []byte) error
 
-func NewKafkaReceiver(ctx context.Context, addrs []string, config *sarama.Config, groupId string, topic string, handler ReceiverHandler) (*KafkaReceiver, error) {
-	client, err := sarama.NewClient(addrs, config)
+// NewKafkaReceiver builds a consumer group client with separate backoff policies for Consume loops and message handling. Call [KafkaReceiver.Start] to begin consumption.
+func NewKafkaReceiver(ctx context.Context, addresses []string, config *sarama.Config, groupId string, topic string, handler ReceiverHandler) (*KafkaReceiver, error) {
+	client, err := sarama.NewClient(addresses, config)
 	if err != nil {
 		return nil, err
 	}
 
 	consumerGroup, err := sarama.NewConsumerGroupFromClient(groupId, client)
 	if err != nil {
+		_ = client.Close()
+
 		return nil, err
 	}
 
@@ -100,6 +102,7 @@ func NewKafkaReceiver(ctx context.Context, addrs []string, config *sarama.Config
 	return receiver, nil
 }
 
+// Start launches the Consume loop in a goroutine. It blocks until the first rebalance completes (Setup closes ready), then returns nil while consumption continues until ctx is done or the group closes.
 func (p *KafkaReceiver) Start(ctx context.Context) error {
 	handler := sarama.ConsumerGroupHandler(p)
 
@@ -112,17 +115,16 @@ func (p *KafkaReceiver) Start(ctx context.Context) error {
 
 		retry := func() error {
 			err := p.consumerGroup.Consume(ctx, []string{p.topic}, handler)
-			// 主动调用了Stop接口，消费组已关闭，退出消费逻辑
+			// Normal exit when the consumer group was closed explicitly.
 			if errors.Is(err, sarama.ErrClosedConsumerGroup) {
 				return nil
 			}
 
-			// context cancel
 			if ctx.Err() != nil {
 				return nil
 			}
 
-			// 消费组运行其他异常的错误处理（例如与kafka broker断开连接），则尝试重新启动消费
+			// Transient broker errors: log and let backoff retry the Consume call.
 			if err != nil {
 				tlog.E(ctx).Err(err).Msgf("kafka consumer group stop (%s) err (%v).",
 					p.topic, err)
@@ -130,7 +132,7 @@ func (p *KafkaReceiver) Start(ctx context.Context) error {
 				return err
 			}
 
-			// consumer rebalanced 处理逻辑，返回error后尝试重新启动消费
+			// Rebalance: reset the ready channel and force a retry of Consume.
 			p.ready = make(chan struct{})
 
 			return fmt.Errorf("rebalance")
@@ -148,6 +150,7 @@ func (p *KafkaReceiver) Start(ctx context.Context) error {
 	return nil
 }
 
+// Close closes the consumer group and waits for the background Consume goroutine to finish.
 func (p *KafkaReceiver) Close(ctx context.Context) error {
 	err := p.consumerGroup.Close()
 	if err != nil {
@@ -159,16 +162,19 @@ func (p *KafkaReceiver) Close(ctx context.Context) error {
 	return nil
 }
 
+// Setup closes the ready channel so [KafkaReceiver.Start] can unblock after the first session assignment.
 func (p *KafkaReceiver) Setup(sarama.ConsumerGroupSession) error {
 	close(p.ready)
 
 	return nil
 }
 
+// Cleanup implements sarama.ConsumerGroupHandler; no extra teardown is required.
 func (p *KafkaReceiver) Cleanup(sarama.ConsumerGroupSession) error {
 	return nil
 }
 
+// ConsumeClaim implements sarama.ConsumerGroupHandler. It retries transient handler errors with backoff, commits offsets after successful handling or when the error is a [PermanentError], and exits when the claim or session ends.
 func (p *KafkaReceiver) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	p.consumeBackOff.Reset()
 
@@ -210,10 +216,7 @@ func (p *KafkaReceiver) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 					}
 				}()
 
-				// consumeFunc返回值的处理逻辑：
-				// * 若返回nil，则代表处理成功，退出重试循环，标注消费完成。
-				// * 若返回PermanentError，则代表消费失败，且无需重试，退出重试循环，标注消费完成。
-				// * 若返回其他error，则代表消费失败，并进入重试逻辑。
+				// nil: success; *PermanentError: failure without retry; any other error: backoff and retry.
 				err = p.consumeFunc(ctx, msg)
 				if errors.Is(err, &PermanentError{}) {
 					return nil
@@ -222,7 +225,7 @@ func (p *KafkaReceiver) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 				return err
 			}
 
-			// 重试过程中，检测到当前session已结束，则立即退出
+			// Backoff respects session.Context(); cancellation exits the retry loop.
 			err := backoff.Retry(retry, backoff.WithContext(p.consumeBackOff, session.Context()))
 			if err != nil {
 				return err

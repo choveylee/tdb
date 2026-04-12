@@ -1,11 +1,3 @@
-/**
- * @Author: lidonglin
- * @Description:
- * @File:  metric.go
- * @Version: 1.0.0
- * @Date: 2023/12/13 18:06
- */
-
 package tdb
 
 import (
@@ -13,23 +5,26 @@ import (
 )
 
 var (
+	// MysqlHistogram records SQL latency in milliseconds, labeled by table name, primary clause type, and success or failure.
 	MysqlHistogram, _ = tmetric.NewHistogramVec(
 		"mysql_latency",
-		"histogram of sql latency (milliseconds)",
+		"SQL statement latency in milliseconds, labeled by table, primary clause, and outcome.",
 		[]string{"sql_table", "sql_operation", "sql_status"},
 	)
 )
 
 var (
+	// RedisPoolOpGauge reports pool hits, misses, timeouts, and stale connection counts.
 	RedisPoolOpGauge, _ = tmetric.NewGaugeVec(
 		"redis_pool_op",
-		"counter of redis pool op",
+		"Redis client pool operation counters (hits, misses, timeouts, stale connections).",
 		[]string{"redis_pool_op"},
 	)
 
+	// RedisConnStatusGauge reports idle and active connection counts.
 	RedisConnStatusGauge, _ = tmetric.NewGaugeVec(
 		"redis_conn_status",
-		"counter of redis conn status",
+		"Redis connection counts by state (idle versus active).",
 		[]string{"redis_conn_status"},
 	)
 )

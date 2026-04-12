@@ -1,11 +1,3 @@
-/**
- * @Author: lidonglin
- * @Description:
- * @File:  mysql
- * @Version: 1.0.0
- * @Date: 2023/11/15 10:23
- */
-
 package tdb
 
 import (
@@ -21,10 +13,12 @@ import (
 	"github.com/choveylee/tlog"
 )
 
+// dbLogger implements gorm.io/gorm/logger.Interface, forwarding GORM logs to tlog and flagging queries slower than 500ms.
 type dbLogger struct {
 	LogLevel logger.LogLevel
 }
 
+// LogMode returns a new logger.Interface with the given log level.
 func (l *dbLogger) LogMode(level logger.LogLevel) logger.Interface {
 	newLogger := *l
 
@@ -33,24 +27,29 @@ func (l *dbLogger) LogMode(level logger.LogLevel) logger.Interface {
 	return &newLogger
 }
 
+// Info logs a formatted message when the configured level is at least Info.
 func (l *dbLogger) Info(ctx context.Context, msg string, args ...interface{}) {
 	if l.LogLevel >= logger.Info {
 		tlog.I(ctx).Msgf(msg, args...)
 	}
 }
 
+// Warn logs a formatted message when the configured level is at least Warn.
 func (l *dbLogger) Warn(ctx context.Context, msg string, args ...interface{}) {
 	if l.LogLevel >= logger.Warn {
 		tlog.W(ctx).Msgf(msg, args...)
 	}
 }
 
+// Error logs a formatted message when the configured level is at least Error.
 func (l *dbLogger) Error(ctx context.Context, msg string, args ...interface{}) {
 	if l.LogLevel >= logger.Error {
 		tlog.E(ctx).Msgf(msg, args...)
 	}
 }
 
+// Trace records per-statement latency. At Info level it logs the raw SQL; queries slower than 500ms are logged as slow queries.
+// The callback fc may be invoked more than once when multiple branches apply.
 func (l *dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	latency := time.Since(begin)
 
@@ -69,10 +68,12 @@ func (l *dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string
 
 var _ logger.Interface = &dbLogger{}
 
+// beforeMetricHook stores the statement start time for use by afterMetricHook.
 func beforeMetricHook(db *gorm.DB) {
 	db.Set("metric_start_time", time.Now())
 }
 
+// afterMetricHook observes elapsed time into [MysqlHistogram] after each statement.
 func afterMetricHook(db *gorm.DB) {
 	if db.Statement.Schema == nil || len(db.Statement.BuildClauses) == 0 {
 		return
@@ -83,16 +84,25 @@ func afterMetricHook(db *gorm.DB) {
 		sqlStatus = "FAILED"
 	}
 
-	if start, ok := db.Get("metric_start_time"); ok {
-		MysqlHistogram.Observe(
-			float64(time.Since(start.(time.Time)).Milliseconds()),
-			db.Statement.Schema.Table,
-			db.Statement.BuildClauses[0],
-			sqlStatus,
-		)
+	srcStartTime, ok := db.Get("metric_start_time")
+	if !ok {
+		return
 	}
+
+	startTime, ok := srcStartTime.(time.Time)
+	if !ok {
+		return
+	}
+
+	MysqlHistogram.Observe(
+		float64(time.Since(startTime).Milliseconds()),
+		db.Statement.Schema.Table,
+		db.Statement.BuildClauses[0],
+		sqlStatus,
+	)
 }
 
+// openDB opens a GORM DB from dsn, registers the OpenTelemetry plugin, and wires metric hooks on CRUD callbacks.
 func openDB(ctx context.Context, dsn string, logLevel logger.LogLevel) (*gorm.DB, error) {
 	dialector := mysql.Open(dsn)
 
@@ -129,10 +139,12 @@ func openDB(ctx context.Context, dsn string, logLevel logger.LogLevel) (*gorm.DB
 	return gormDB, nil
 }
 
+// MysqlClient wraps a GORM-backed MySQL connection with SQL latency histograms.
 type MysqlClient struct {
 	db *gorm.DB
 }
 
+// NewMysqlClient returns a client with GORM log level Error, suitable for lower-noise production defaults.
 func NewMysqlClient(ctx context.Context, dsn string) (*MysqlClient, error) {
 	db, err := openDB(ctx, dsn, logger.Error)
 	if err != nil {
@@ -146,6 +158,7 @@ func NewMysqlClient(ctx context.Context, dsn string) (*MysqlClient, error) {
 	return mysqlClient, nil
 }
 
+// NewMysqlClientWithLog returns a client with GORM log level Info for detailed SQL tracing.
 func NewMysqlClientWithLog(ctx context.Context, dsn string) (*MysqlClient, error) {
 	gormDb, err := openDB(ctx, dsn, logger.Info)
 	if err != nil {
@@ -159,6 +172,7 @@ func NewMysqlClientWithLog(ctx context.Context, dsn string) (*MysqlClient, error
 	return mysqlClient, nil
 }
 
+// DB returns a context-bound *gorm.DB. When runMode is [DebugMode], the session runs with GORM Debug enabled.
 func (p *MysqlClient) DB(ctx context.Context, runMode string) *gorm.DB {
 	if runMode == DebugMode {
 		return p.db.WithContext(ctx).Debug()
@@ -167,6 +181,8 @@ func (p *MysqlClient) DB(ctx context.Context, runMode string) *gorm.DB {
 	return p.db.WithContext(ctx)
 }
 
+// Tx begins a transaction and returns *gorm.DB. The caller must Commit or Rollback the returned session.
+// When runMode is [DebugMode], the transaction uses GORM Debug.
 func (p *MysqlClient) Tx(ctx context.Context, runMode string) *gorm.DB {
 	if runMode == DebugMode {
 		return p.db.WithContext(ctx).Debug().Begin()
@@ -175,6 +191,7 @@ func (p *MysqlClient) Tx(ctx context.Context, runMode string) *gorm.DB {
 	return p.db.WithContext(ctx).Begin()
 }
 
+// SetMaxOpenConns sets the maximum number of open connections on the underlying sql.DB.
 func (p *MysqlClient) SetMaxOpenConns(maxOpenConns int) error {
 	sqlDB, err := p.db.DB()
 	if err != nil {
@@ -186,6 +203,7 @@ func (p *MysqlClient) SetMaxOpenConns(maxOpenConns int) error {
 	return nil
 }
 
+// SetMaxIdleConns sets the maximum number of idle connections on the underlying sql.DB.
 func (p *MysqlClient) SetMaxIdleConns(maxIdleConns int) error {
 	sqlDB, err := p.db.DB()
 	if err != nil {
@@ -197,6 +215,7 @@ func (p *MysqlClient) SetMaxIdleConns(maxIdleConns int) error {
 	return nil
 }
 
+// SetConnMaxLifetime sets the maximum amount of time a connection may be reused.
 func (p *MysqlClient) SetConnMaxLifetime(connMaxLifetime time.Duration) error {
 	sqlDB, err := p.db.DB()
 	if err != nil {
@@ -208,6 +227,7 @@ func (p *MysqlClient) SetConnMaxLifetime(connMaxLifetime time.Duration) error {
 	return nil
 }
 
+// SetConnMaxIdleTime sets how long an idle connection may remain in the pool.
 func (p *MysqlClient) SetConnMaxIdleTime(connMaxIdleTime time.Duration) error {
 	sqlDB, err := p.db.DB()
 	if err != nil {

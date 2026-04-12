@@ -1,11 +1,3 @@
-/**
- * @Author: lidonglin
- * @Description:
- * @File:  kafka.go
- * @Version: 1.0.0
- * @Date: 2023/12/14 10:43
- */
-
 package tdb
 
 import (
@@ -18,6 +10,7 @@ import (
 	"github.com/choveylee/tlog"
 )
 
+// KafkaAsyncSender publishes JSON-encoded values to a fixed topic using a Sarama async producer.
 type KafkaAsyncSender struct {
 	producer sarama.AsyncProducer
 
@@ -26,6 +19,7 @@ type KafkaAsyncSender struct {
 	wg sync.WaitGroup
 }
 
+// NewKafkaAsyncSender constructs an async producer without subscribing to success or error channels.
 func NewKafkaAsyncSender(ctx context.Context, addrs []string, config *sarama.Config, topic string) (*KafkaAsyncSender, error) {
 	producer, err := sarama.NewAsyncProducer(addrs, config)
 	if err != nil {
@@ -43,15 +37,25 @@ func NewKafkaAsyncSender(ctx context.Context, addrs []string, config *sarama.Con
 	return sender, nil
 }
 
-// AsyncSenderSuccessCallback  生产者所需要，异步发消息时候接口回调消息的函数类型
+// AsyncSenderSuccessCallback is invoked on each successful produce; arguments are the encoded payload and any Encode error from the value.
 type AsyncSenderSuccessCallback func([]byte, error)
 
-// AsyncSenderErrorCallback 生产者所需要，异步发消息时候接口回调消息的函数类型
+// AsyncSenderErrorCallback is invoked when the producer reports an error on the Errors channel.
 type AsyncSenderErrorCallback func(error)
 
+// NewKafkaAsyncSenderWithCallback builds an async producer, enables Return.Successes and Return.Errors, and starts background listeners that invoke the callbacks.
 func NewKafkaAsyncSenderWithCallback(ctx context.Context, addrs []string, config *sarama.Config, topic string,
 	successCallback AsyncSenderSuccessCallback, errorCallback AsyncSenderErrorCallback) (*KafkaAsyncSender, error) {
-	producer, err := sarama.NewAsyncProducer(addrs, config)
+	cfg := config
+
+	if cfg == nil {
+		cfg = sarama.NewConfig()
+	}
+
+	cfg.Producer.Return.Successes = true
+	cfg.Producer.Return.Errors = true
+
+	producer, err := sarama.NewAsyncProducer(addrs, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -63,13 +67,6 @@ func NewKafkaAsyncSenderWithCallback(ctx context.Context, addrs []string, config
 	}
 
 	// producer = otelsarama.WrapSyncProducer(c.Config, producer)
-
-	if config == nil {
-		config = sarama.NewConfig()
-	}
-
-	config.Producer.Return.Successes = true
-	config.Producer.Return.Errors = true
 
 	sender.wg.Add(1)
 	go func() {
@@ -114,6 +111,7 @@ func NewKafkaAsyncSenderWithCallback(ctx context.Context, addrs []string, config
 	return sender, nil
 }
 
+// Send marshals data to JSON and enqueues a producer message with the given key on the async input channel.
 func (p *KafkaAsyncSender) Send(ctx context.Context, key string, data interface{}) error {
 	bytes, err := json.Marshal(data)
 	if err != nil {
@@ -134,6 +132,7 @@ func (p *KafkaAsyncSender) Send(ctx context.Context, key string, data interface{
 	return nil
 }
 
+// Close shuts down the async producer and waits for callback goroutines started by WithCallback.
 func (p *KafkaAsyncSender) Close(ctx context.Context) error {
 	p.producer.AsyncClose()
 
@@ -142,12 +141,14 @@ func (p *KafkaAsyncSender) Close(ctx context.Context) error {
 	return nil
 }
 
+// KafkaSyncSender publishes JSON-encoded values to a fixed topic using a Sarama sync producer.
 type KafkaSyncSender struct {
 	producer sarama.SyncProducer
 
 	topic string
 }
 
+// NewKafkaSyncSender constructs a sync producer for the given brokers and topic.
 func NewKafkaSyncSender(ctx context.Context, addrs []string, config *sarama.Config, topic string) (*KafkaSyncSender, error) {
 	producer, err := sarama.NewSyncProducer(addrs, config)
 	if err != nil {
@@ -165,6 +166,7 @@ func NewKafkaSyncSender(ctx context.Context, addrs []string, config *sarama.Conf
 	return sender, nil
 }
 
+// Send marshals data to JSON and produces synchronously, returning the partition and offset.
 func (p *KafkaSyncSender) Send(ctx context.Context, key string, data interface{}) (int32, int64, error) {
 	bytes, err := json.Marshal(data)
 	if err != nil {
@@ -185,6 +187,7 @@ func (p *KafkaSyncSender) Send(ctx context.Context, key string, data interface{}
 	return partition, offset, err
 }
 
+// Close closes the underlying sync producer.
 func (p *KafkaSyncSender) Close(ctx context.Context) error {
 	return p.producer.Close()
 }
