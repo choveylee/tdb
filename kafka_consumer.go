@@ -12,14 +12,34 @@ import (
 	"github.com/choveylee/tlog"
 )
 
+var (
+	newSaramaClient = sarama.NewClient
+
+	newConsumerGroupFromClient = sarama.NewConsumerGroupFromClient
+)
+
+func newKafkaBackOff() backoff.BackOff {
+	retryBackOff := backoff.NewExponentialBackOff()
+
+	retryBackOff.RandomizationFactor = 0
+	retryBackOff.MaxElapsedTime = 0
+	retryBackOff.MaxInterval = 30 * time.Second
+
+	return retryBackOff
+}
+
 // PermanentError wraps a handler failure that must not be retried; it participates in errors.Is matching.
 type PermanentError struct {
 	err error
 }
 
-// Error implements error and prefixes the message with a permanent-error marker.
+// Error implements error and prefixes the message with a stable permanent-error marker.
 func (p *PermanentError) Error() string {
-	return "(permanent error)" + p.err.Error()
+	if p == nil || p.err == nil {
+		return "permanent error"
+	}
+
+	return "permanent error: " + p.err.Error()
 }
 
 // Is supports errors.Is by detecting *PermanentError in the error chain.
@@ -48,10 +68,12 @@ type KafkaReceiver struct {
 
 	consumeFunc ConsumeFunc
 
-	connectBackOff backoff.BackOff
-	consumeBackOff backoff.BackOff
+	newConnectBackOff func() backoff.BackOff
+	newConsumeBackOff func() backoff.BackOff
 
-	ready chan struct{}
+	startMu sync.Mutex
+	startCh chan error
+	started bool
 
 	wg sync.WaitGroup
 }
@@ -59,29 +81,20 @@ type KafkaReceiver struct {
 // ReceiverHandler is a simplified handler that receives only the message value; [NewKafkaReceiver] adapts it to [ConsumeFunc].
 type ReceiverHandler func(context.Context, []byte) error
 
-// NewKafkaReceiver builds a consumer group client with separate backoff policies for Consume loops and message handling. Call [KafkaReceiver.Start] to begin consumption.
+// NewKafkaReceiver constructs a Kafka consumer group receiver with independent backoff policies for connection retries and message handling retries.
+// Call [KafkaReceiver.Start] to begin consumption.
 func NewKafkaReceiver(ctx context.Context, addresses []string, config *sarama.Config, groupId string, topic string, handler ReceiverHandler) (*KafkaReceiver, error) {
-	client, err := sarama.NewClient(addresses, config)
+	client, err := newSaramaClient(addresses, config)
 	if err != nil {
 		return nil, err
 	}
 
-	consumerGroup, err := sarama.NewConsumerGroupFromClient(groupId, client)
+	consumerGroup, err := newConsumerGroupFromClient(groupId, client)
 	if err != nil {
 		_ = client.Close()
 
 		return nil, err
 	}
-
-	connectBackOff := backoff.NewExponentialBackOff()
-	connectBackOff.RandomizationFactor = 0
-	connectBackOff.MaxElapsedTime = 0
-	connectBackOff.MaxInterval = 30 * time.Second
-
-	consumeBackOff := backoff.NewExponentialBackOff()
-	consumeBackOff.RandomizationFactor = 0
-	consumeBackOff.MaxElapsedTime = 0
-	consumeBackOff.MaxInterval = 30 * time.Second
 
 	receiver := &KafkaReceiver{
 		client:        client,
@@ -93,18 +106,99 @@ func NewKafkaReceiver(ctx context.Context, addresses []string, config *sarama.Co
 			return handler(ctx, msg.Value)
 		},
 
-		connectBackOff: connectBackOff,
-		consumeBackOff: consumeBackOff,
-
-		ready: make(chan struct{}),
+		newConnectBackOff: newKafkaBackOff,
+		newConsumeBackOff: newKafkaBackOff,
 	}
 
 	return receiver, nil
 }
 
-// Start launches the Consume loop in a goroutine. It blocks until the first rebalance completes (Setup closes ready), then returns nil while consumption continues until ctx is done or the group closes.
+func (p *KafkaReceiver) resetStartSignal() <-chan error {
+	startCh := make(chan error, 1)
+
+	p.startMu.Lock()
+
+	p.startCh = startCh
+	p.started = false
+
+	p.startMu.Unlock()
+
+	return startCh
+}
+
+func (p *KafkaReceiver) signalStart(err error) {
+	p.startMu.Lock()
+
+	startCh := p.startCh
+	if startCh != nil {
+		p.startCh = nil
+	}
+
+	p.startMu.Unlock()
+
+	if startCh == nil {
+		return
+	}
+
+	startCh <- err
+	close(startCh)
+}
+
+func (p *KafkaReceiver) markStarted() {
+	p.startMu.Lock()
+
+	if p.started {
+		p.startMu.Unlock()
+
+		return
+	}
+
+	p.started = true
+	startCh := p.startCh
+	if startCh != nil {
+		p.startCh = nil
+	}
+
+	p.startMu.Unlock()
+
+	if startCh == nil {
+		return
+	}
+
+	startCh <- nil
+	close(startCh)
+}
+
+func (p *KafkaReceiver) hasStarted() bool {
+	p.startMu.Lock()
+	defer p.startMu.Unlock()
+
+	return p.started
+}
+
+func (p *KafkaReceiver) connectBackOff() backoff.BackOff {
+	if p.newConnectBackOff != nil {
+		return p.newConnectBackOff()
+	}
+
+	return newKafkaBackOff()
+}
+
+func (p *KafkaReceiver) consumeBackOff() backoff.BackOff {
+	if p.newConsumeBackOff != nil {
+		return p.newConsumeBackOff()
+	}
+
+	return newKafkaBackOff()
+}
+
+// Start launches the Consume loop in a goroutine.
+// It blocks until the first consumer-group session is established, or returns an error if startup fails or the context is canceled before [KafkaReceiver.Setup] runs.
 func (p *KafkaReceiver) Start(ctx context.Context) error {
 	handler := sarama.ConsumerGroupHandler(p)
+
+	startCh := p.resetStartSignal()
+	connectBackOff := p.connectBackOff()
 
 	// handler = otelsarama.WrapConsumerGroupHandler(r)
 
@@ -113,58 +207,91 @@ func (p *KafkaReceiver) Start(ctx context.Context) error {
 	go func() {
 		defer p.wg.Done()
 
-		retry := func() error {
+		for {
 			err := p.consumerGroup.Consume(ctx, []string{p.topic}, handler)
-			// Normal exit when the consumer group was closed explicitly.
-			if errors.Is(err, sarama.ErrClosedConsumerGroup) {
-				return nil
+
+			switch {
+			case errors.Is(err, sarama.ErrClosedConsumerGroup):
+				p.signalStart(nil)
+
+				tlog.I(ctx).Msgf("Kafka consumer group for topic %q has stopped.", p.topic)
+
+				return
+			case ctx.Err() != nil:
+				p.signalStart(ctx.Err())
+
+				return
+			case err != nil:
+				if !p.hasStarted() {
+					p.signalStart(err)
+
+					return
+				}
+
+				tlog.E(ctx).Err(err).Msgf("Kafka consumer group for topic %q encountered an error and will retry.",
+					p.topic)
+
+				waitDuration := connectBackOff.NextBackOff()
+				if waitDuration == backoff.Stop {
+					p.signalStart(err)
+
+					return
+				}
+
+				timer := time.NewTimer(waitDuration)
+				select {
+				case <-ctx.Done():
+					if !timer.Stop() {
+						<-timer.C
+					}
+
+					p.signalStart(ctx.Err())
+
+					return
+				case <-timer.C:
+				}
+			default:
+				if !p.hasStarted() {
+					p.signalStart(fmt.Errorf("consumer group for topic %q exited before initial setup completed", p.topic))
+
+					return
+				}
+
+				connectBackOff.Reset()
 			}
-
-			if ctx.Err() != nil {
-				return nil
-			}
-
-			// Transient broker errors: log and let backoff retry the Consume call.
-			if err != nil {
-				tlog.E(ctx).Err(err).Msgf("kafka consumer group stop (%s) err (%v).",
-					p.topic, err)
-
-				return err
-			}
-
-			// Rebalance: reset the ready channel and force a retry of Consume.
-			p.ready = make(chan struct{})
-
-			return fmt.Errorf("rebalance")
 		}
-
-		err := backoff.Retry(retry, p.connectBackOff)
-		if err != nil {
-			return
-		}
-
-		tlog.I(ctx).Msgf("kafka consumer group (%s) closed or stop.", p.topic)
 	}()
 
-	<-p.ready
-	return nil
+	select {
+	case err := <-startCh:
+		return err
+	case <-ctx.Done():
+		p.signalStart(ctx.Err())
+
+		return ctx.Err()
+	}
 }
 
-// Close closes the consumer group and waits for the background Consume goroutine to finish.
+// Close closes the consumer group, closes the underlying Kafka client, and waits for the background Consume goroutine to finish.
 func (p *KafkaReceiver) Close(ctx context.Context) error {
-	err := p.consumerGroup.Close()
-	if err != nil {
-		return err
+	var err error
+
+	if p.consumerGroup != nil {
+		err = errors.Join(err, p.consumerGroup.Close())
+	}
+
+	if p.client != nil {
+		err = errors.Join(err, p.client.Close())
 	}
 
 	p.wg.Wait()
 
-	return nil
+	return err
 }
 
-// Setup closes the ready channel so [KafkaReceiver.Start] can unblock after the first session assignment.
+// Setup marks the receiver as started so [KafkaReceiver.Start] can unblock after the first session assignment.
 func (p *KafkaReceiver) Setup(sarama.ConsumerGroupSession) error {
-	close(p.ready)
+	p.markStarted()
 
 	return nil
 }
@@ -174,17 +301,16 @@ func (p *KafkaReceiver) Cleanup(sarama.ConsumerGroupSession) error {
 	return nil
 }
 
-// ConsumeClaim implements sarama.ConsumerGroupHandler. It retries transient handler errors with backoff, commits offsets after successful handling or when the error is a [PermanentError], and exits when the claim or session ends.
+// ConsumeClaim implements sarama.ConsumerGroupHandler.
+// It retries transient handler errors with backoff, commits offsets after successful handling or when the error is a [PermanentError], and exits when the claim or session ends.
 func (p *KafkaReceiver) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	p.consumeBackOff.Reset()
-
-	ctx := context.Background()
+	ctx := session.Context()
 
 	for {
 		select {
 		case msg, ok := <-claim.Messages():
 			if !ok {
-				tlog.I(ctx).Msg("message channel closed.")
+				tlog.I(ctx).Msg("Kafka claim message channel has been closed.")
 
 				return nil
 			}
@@ -206,13 +332,13 @@ func (p *KafkaReceiver) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 						Detailf("partition:%d", msg.Partition).
 						Detailf("offset:%d", msg.Offset).
 						Detailf("message:%s", string(msg.Value)).
-						Msgf("consume log")
+						Msg("Kafka message processing attempt completed.")
 				}()
 
 				defer func() {
 					e := recover()
 					if e != nil {
-						err = fmt.Errorf("panic: %v", e)
+						err = fmt.Errorf("recovered from message handler panic: %v", e)
 					}
 				}()
 
@@ -226,7 +352,7 @@ func (p *KafkaReceiver) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 			}
 
 			// Backoff respects session.Context(); cancellation exits the retry loop.
-			err := backoff.Retry(retry, backoff.WithContext(p.consumeBackOff, session.Context()))
+			err := backoff.Retry(retry, backoff.WithContext(p.consumeBackOff(), ctx))
 			if err != nil {
 				return err
 			}

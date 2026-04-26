@@ -48,7 +48,7 @@ func (l *dbLogger) Error(ctx context.Context, msg string, args ...interface{}) {
 	}
 }
 
-// Trace records per-statement latency. At Info level it logs the raw SQL; queries slower than 500ms are logged as slow queries.
+// Trace records per-statement latency. At Info level it logs the executed SQL; queries slower than 500ms are logged as slow queries.
 // The callback fc may be invoked more than once when multiple branches apply.
 func (l *dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	latency := time.Since(begin)
@@ -56,13 +56,13 @@ func (l *dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string
 	if latency > time.Millisecond*500 {
 		rawSql, _ := fc()
 
-		tlog.I(ctx).Msgf("slow query sql: %s, latency: %s", rawSql, latency)
+		tlog.I(ctx).Msgf("Slow SQL statement detected: sql=%s latency=%s", rawSql, latency)
 	}
 
 	if l.LogLevel == logger.Info {
 		rawSql, _ := fc()
 
-		tlog.D(ctx).Msgf("raw sql: %s, latency: %s", rawSql, latency)
+		tlog.D(ctx).Msgf("SQL statement executed: sql=%s latency=%s", rawSql, latency)
 	}
 }
 

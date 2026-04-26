@@ -1,6 +1,6 @@
 # tdb
 
-`tdb` is a Go library that bundles common service infrastructure: **MySQL** (GORM with OpenTelemetry and SQL latency metrics), **Redis** (go-redis with pool metrics), **Kafka** (Sarama async/sync producers and consumer groups with backoff), optional **monthly table sharding** (gorm.io/sharding with MongoDB ObjectID or `time.Time` keys), and **Prometheus-style** metrics via `tmetric`.
+`tdb` is a Go library that provides reusable infrastructure components for backend services. The package includes **MySQL** access built on GORM with OpenTelemetry integration and SQL latency metrics, **Redis** clients with connection-pool metrics, **Kafka** producers and consumer groups built on Sarama, optional **monthly table sharding** for GORM models, and **Prometheus-style** metrics via `tmetric`.
 
 ## Requirements
 
@@ -14,23 +14,30 @@ go get github.com/choveylee/tdb
 
 ## Documentation
 
-Browse package documentation locally:
+Generate package documentation locally with:
 
 ```bash
 go doc -all github.com/choveylee/tdb
 ```
 
-The [`doc.go`](doc.go) file contains the top-level package overview with linked symbols for `go doc` / pkg.go.dev.
+The top-level package overview is defined in [`doc.go`](doc.go) and is written for compatibility with `go doc` and pkg.go.dev.
 
 ## Overview
 
 | Area | Types / entry points |
 |------|----------------------|
 | MySQL | [`MysqlClient`](mysql.go), [`NewMysqlClient`](mysql.go), [`NewMysqlClientWithLog`](mysql.go), run modes [`DebugMode`](const.go) / [`ReleaseMode`](const.go) |
-| Redis | [`RedisClient`](redis.go), [`NewRedisClient`](redis.go), [`NewRedisClientE`](redis.go), [`RedisClient.Close`](redis.go) |
+| Redis | [`RedisClient`](redis.go), [`NewRedisClient`](redis.go), [`NewRedisClientEx`](redis.go), [`RedisClient.Close`](redis.go) |
 | Kafka | [`KafkaAsyncSender`](kafka_producer.go), [`KafkaSyncSender`](kafka_producer.go), [`KafkaReceiver`](kafka_consumer.go) |
 | Sharding | [`MonthlyShardingByOid`](sharding.go), [`MonthlyShardingByTime`](sharding.go) |
 | Metrics | [`MysqlHistogram`](metric.go), [`RedisPoolOpGauge`](metric.go), [`RedisConnStatusGauge`](metric.go) |
+
+## Behavioral Notes
+
+- `KafkaReceiver.Start` blocks until the first consumer-group session is established. If startup fails before the initial session is ready, the method returns the corresponding error instead of blocking indefinitely.
+- `KafkaReceiver` passes the consumer-session context to message handlers so application code can stop promptly during shutdown or rebalance.
+- `MonthlyShardingByOid` and `MonthlyShardingByTime` derive monthly suffixes in `UTC`, which keeps shard selection stable across deployment time zones.
+- `NewKafkaAsyncSender` disables Sarama success and error result channels internally. Use `NewKafkaAsyncSenderWithCallback` when callback-based delivery notifications are required.
 
 ## Examples
 
@@ -69,9 +76,9 @@ if err != nil {
 if err := recv.Start(ctx); err != nil {
     return err
 }
-defer recv.Close(ctx)
+defer func() { _ = recv.Close(ctx) }()
 ```
 
 ## Contributing
 
-Follow standard Go style (`gofmt`, meaningful commit messages). Package comments and exported APIs should remain documented in **English** for `go doc` compatibility.
+Follow standard Go conventions, including `gofmt`, focused commits, and clear exported API documentation. Package comments and exported identifiers should remain documented in **English** to preserve `go doc` compatibility.
