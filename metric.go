@@ -5,7 +5,7 @@ import (
 )
 
 var (
-	// MysqlHistogram records SQL latency in milliseconds, labeled by table name, primary clause type, and success or failure.
+	// MysqlHistogram records SQL statement latency in milliseconds, labeled by table name, primary clause, and execution outcome.
 	MysqlHistogram, _ = tmetric.NewHistogramVec(
 		"mysql_latency",
 		"SQL statement latency in milliseconds, labeled by table, primary clause, and outcome.",
@@ -14,14 +14,14 @@ var (
 )
 
 var (
-	// RedisPoolOpGauge reports pool hits, misses, timeouts, and stale connection counts.
+	// RedisPoolOpGauge reports Redis connection-pool counters, including hits, misses, timeouts, and stale connections.
 	RedisPoolOpGauge, _ = tmetric.NewGaugeVec(
 		"redis_pool_op",
 		"Redis client pool operation counters (hits, misses, timeouts, stale connections).",
 		[]string{"redis_pool_op"},
 	)
 
-	// RedisConnStatusGauge reports idle and active connection counts.
+	// RedisConnStatusGauge reports the number of idle and active Redis connections.
 	RedisConnStatusGauge, _ = tmetric.NewGaugeVec(
 		"redis_conn_status",
 		"Redis connection counts by state (idle versus active).",

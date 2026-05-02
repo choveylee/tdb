@@ -8,7 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisClient wraps go-redis and periodically exports connection pool gauges in a background goroutine.
+// RedisClient wraps [redis.Client] and periodically exports connection-pool gauges from a background goroutine.
 // Call [RedisClient.Close] when the client is no longer needed to stop the reporter and release connections.
 type RedisClient struct {
 	client *redis.Client
@@ -18,12 +18,12 @@ type RedisClient struct {
 	closeOnce sync.Once
 }
 
-// NewRedisClient dials logical database 0, verifies the connection with Ping, then starts a metrics reporter goroutine.
+// NewRedisClient creates a client for logical database 0, verifies connectivity with Ping, and starts the metrics reporter goroutine.
 func NewRedisClient(ctx context.Context, address, password string, poolSize int) (*RedisClient, error) {
 	return newRedisClient(ctx, address, password, 0, poolSize)
 }
 
-// NewRedisClientEx behaves like [NewRedisClient] but selects the Redis logical database index db.
+// NewRedisClientEx behaves like [NewRedisClient] but selects the Redis logical database identified by db.
 func NewRedisClientEx(ctx context.Context, address, password string, db int, poolSize int) (*RedisClient, error) {
 	return newRedisClient(ctx, address, password, db, poolSize)
 }
@@ -84,7 +84,7 @@ func reportRedisPoolMetrics(client *redis.Client) {
 	RedisConnStatusGauge.Set(float64(poolStats.TotalConns-poolStats.IdleConns), "active")
 }
 
-// Close stops the metrics reporter and closes the underlying Redis client. It is safe to call Close more than once.
+// Close stops the metrics reporter, closes the underlying Redis client, and may be called safely more than once.
 func (p *RedisClient) Close() error {
 	var err error
 
@@ -99,7 +99,7 @@ func (p *RedisClient) Close() error {
 	return err
 }
 
-// Client returns the underlying *redis.Client.
+// Client returns the underlying [redis.Client].
 func (p *RedisClient) Client() *redis.Client {
 	return p.client
 }

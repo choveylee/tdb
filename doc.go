@@ -15,7 +15,7 @@
 //
 // # Kafka
 //
-// [KafkaAsyncSender] and [KafkaSyncSender] publish JSON-encoded payloads to a fixed topic.
+// [KafkaAsyncSender] and [KafkaSyncSender] publish JSON-encoded payloads to fixed topics.
 // [KafkaReceiver] joins a consumer group, waits for the initial session to be established, and
 // delivers payloads through [ReceiverHandler]. Message handlers receive the consumer-session context
 // so they can react promptly to shutdown and rebalance signals.
@@ -23,7 +23,7 @@
 // # Sharding
 //
 // [MonthlyShardingByOid] and [MonthlyShardingByTime] register UTC-based monthly sharding rules with
-// gorm.io/sharding, ensuring consistent routing across deployment time zones.
+// gorm.io/sharding, ensuring deterministic routing across deployment time zones.
 //
 // # Metrics
 //

@@ -1,9 +1,9 @@
 package tdb
 
 const (
-	// DebugMode selects verbose SQL logging: [MysqlClient.DB] and [MysqlClient.Tx] run the underlying GORM session in Debug mode.
+	// DebugMode enables verbose SQL logging. [MysqlClient.DB] and [MysqlClient.Tx] return GORM sessions with Debug logging enabled.
 	DebugMode = "debug"
 
-	// ReleaseMode is the default run mode without forcing GORM Debug on every statement.
+	// ReleaseMode uses the standard GORM session without forcing Debug logging for every statement.
 	ReleaseMode = "release"
 )

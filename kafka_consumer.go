@@ -28,7 +28,7 @@ func newKafkaBackOff() backoff.BackOff {
 	return retryBackOff
 }
 
-// PermanentError wraps a handler failure that must not be retried; it participates in errors.Is matching.
+// PermanentError wraps a handler failure that should not be retried; it participates in errors.Is matching.
 type PermanentError struct {
 	err error
 }
@@ -56,10 +56,10 @@ func NewPermanentError(err error) *PermanentError {
 	return &PermanentError{err: err}
 }
 
-// ConsumeFunc processes a single Kafka message; nil means success.
+// ConsumeFunc processes a single Kafka message and returns nil on success.
 type ConsumeFunc func(context.Context, *sarama.ConsumerMessage) error
 
-// KafkaReceiver runs a Sarama consumer group with exponential backoff on reconnect and per-message retry.
+// KafkaReceiver runs a Sarama consumer group with exponential backoff for connection retries and per-message retry attempts.
 type KafkaReceiver struct {
 	client        sarama.Client
 	consumerGroup sarama.ConsumerGroup
@@ -192,7 +192,7 @@ func (p *KafkaReceiver) consumeBackOff() backoff.BackOff {
 	return newKafkaBackOff()
 }
 
-// Start launches the Consume loop in a goroutine.
+// Start launches the consume loop in a goroutine.
 // It blocks until the first consumer-group session is established, or returns an error if startup fails or the context is canceled before [KafkaReceiver.Setup] runs.
 func (p *KafkaReceiver) Start(ctx context.Context) error {
 	handler := sarama.ConsumerGroupHandler(p)
@@ -214,7 +214,7 @@ func (p *KafkaReceiver) Start(ctx context.Context) error {
 			case errors.Is(err, sarama.ErrClosedConsumerGroup):
 				p.signalStart(nil)
 
-				tlog.I(ctx).Msgf("Kafka consumer group for topic %q has stopped.", p.topic)
+				tlog.I(ctx).Msgf("Kafka consumer group for topic %q stopped.", p.topic)
 
 				return
 			case ctx.Err() != nil:
@@ -272,7 +272,7 @@ func (p *KafkaReceiver) Start(ctx context.Context) error {
 	}
 }
 
-// Close closes the consumer group, closes the underlying Kafka client, and waits for the background Consume goroutine to finish.
+// Close closes the consumer group, closes the underlying Kafka client, and waits for the background consume goroutine to finish.
 func (p *KafkaReceiver) Close(ctx context.Context) error {
 	var err error
 
@@ -289,14 +289,14 @@ func (p *KafkaReceiver) Close(ctx context.Context) error {
 	return err
 }
 
-// Setup marks the receiver as started so [KafkaReceiver.Start] can unblock after the first session assignment.
+// Setup marks the receiver as started, allowing [KafkaReceiver.Start] to return after the initial session assignment.
 func (p *KafkaReceiver) Setup(sarama.ConsumerGroupSession) error {
 	p.markStarted()
 
 	return nil
 }
 
-// Cleanup implements sarama.ConsumerGroupHandler; no extra teardown is required.
+// Cleanup implements [sarama.ConsumerGroupHandler]; no additional teardown is required.
 func (p *KafkaReceiver) Cleanup(sarama.ConsumerGroupSession) error {
 	return nil
 }
@@ -310,7 +310,7 @@ func (p *KafkaReceiver) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 		select {
 		case msg, ok := <-claim.Messages():
 			if !ok {
-				tlog.I(ctx).Msg("Kafka claim message channel has been closed.")
+				tlog.I(ctx).Msg("Kafka claim message channel closed.")
 
 				return nil
 			}

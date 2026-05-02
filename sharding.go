@@ -10,7 +10,7 @@ import (
 	"gorm.io/sharding"
 )
 
-// monthlyShardingAlgorithmByOid derives a table suffix from a MongoDB ObjectID hex string using its embedded timestamp (YYYYMM in UTC).
+// monthlyShardingAlgorithmByOid derives a table suffix from a MongoDB ObjectID hex string using its embedded timestamp in YYYYMM UTC format.
 func monthlyShardingAlgorithmByOid(value interface{}) (suffix string, err error) {
 	srcObjectId, ok := value.(string)
 	if !ok {
@@ -25,7 +25,7 @@ func monthlyShardingAlgorithmByOid(value interface{}) (suffix string, err error)
 	return "_" + objectId.Timestamp().UTC().Format("200601"), nil
 }
 
-// monthlyShardingAlgorithmByTime formats the sharding key time.Time into a YYYYMM table suffix in UTC.
+// monthlyShardingAlgorithmByTime formats the sharding key time into a YYYYMM table suffix in UTC.
 func monthlyShardingAlgorithmByTime(value interface{}) (suffix string, err error) {
 	curTime, ok := value.(time.Time)
 	if !ok {
@@ -35,7 +35,7 @@ func monthlyShardingAlgorithmByTime(value interface{}) (suffix string, err error
 	return "_" + curTime.UTC().Format("200601"), nil
 }
 
-// MonthlyShardingByOid registers UTC-based monthly sharding for the provided tables; the sharding key must be a MongoDB ObjectID hex string.
+// MonthlyShardingByOid registers UTC-based monthly sharding for the provided tables. The sharding key must be a MongoDB ObjectID hex string.
 func MonthlyShardingByOid(shardingKey string, tables []string) *sharding.Sharding {
 	return sharding.Register(sharding.Config{
 		ShardingKey:         shardingKey,
@@ -44,7 +44,7 @@ func MonthlyShardingByOid(shardingKey string, tables []string) *sharding.Shardin
 	}, tables)
 }
 
-// MonthlyShardingByTime registers UTC-based monthly sharding for the provided tables; the sharding key must be a [time.Time] value.
+// MonthlyShardingByTime registers UTC-based monthly sharding for the provided tables. The sharding key must be a `time.Time` value.
 func MonthlyShardingByTime(shardingKey string, tables []string) *sharding.Sharding {
 	return sharding.Register(sharding.Config{
 		ShardingKey:         shardingKey,
@@ -53,7 +53,7 @@ func MonthlyShardingByTime(shardingKey string, tables []string) *sharding.Shardi
 	}, tables)
 }
 
-// listTables returns all table names in the current database, sorted lexicographically.
+// listTables returns all table names in the current database in lexicographic order.
 func (p *MysqlClient) listTables(ctx context.Context) ([]string, error) {
 	tables := make([]string, 0)
 

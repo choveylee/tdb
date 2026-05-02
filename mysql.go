@@ -13,7 +13,7 @@ import (
 	"github.com/choveylee/tlog"
 )
 
-// dbLogger implements gorm.io/gorm/logger.Interface, forwarding GORM logs to tlog and flagging queries slower than 500ms.
+// dbLogger implements [logger.Interface], forwarding GORM log events to tlog and highlighting statements slower than 500ms.
 type dbLogger struct {
 	LogLevel logger.LogLevel
 }
@@ -48,7 +48,7 @@ func (l *dbLogger) Error(ctx context.Context, msg string, args ...interface{}) {
 	}
 }
 
-// Trace records per-statement latency. At Info level it logs the executed SQL; queries slower than 500ms are logged as slow queries.
+// Trace records per-statement latency. At Info level it logs executed SQL; statements slower than 500ms are reported as slow queries.
 // The callback fc may be invoked more than once when multiple branches apply.
 func (l *dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	latency := time.Since(begin)
@@ -56,13 +56,13 @@ func (l *dbLogger) Trace(ctx context.Context, begin time.Time, fc func() (string
 	if latency > time.Millisecond*500 {
 		rawSql, _ := fc()
 
-		tlog.I(ctx).Msgf("Slow SQL statement detected: sql=%s latency=%s", rawSql, latency)
+		tlog.I(ctx).Msgf("Detected slow SQL statement: sql=%s latency=%s", rawSql, latency)
 	}
 
 	if l.LogLevel == logger.Info {
 		rawSql, _ := fc()
 
-		tlog.D(ctx).Msgf("SQL statement executed: sql=%s latency=%s", rawSql, latency)
+		tlog.D(ctx).Msgf("Executed SQL statement: sql=%s latency=%s", rawSql, latency)
 	}
 }
 
@@ -139,12 +139,12 @@ func openDB(ctx context.Context, dsn string, logLevel logger.LogLevel) (*gorm.DB
 	return gormDB, nil
 }
 
-// MysqlClient wraps a GORM-backed MySQL connection with SQL latency histograms.
+// MysqlClient wraps a GORM-backed MySQL connection together with SQL latency instrumentation.
 type MysqlClient struct {
 	db *gorm.DB
 }
 
-// NewMysqlClient returns a client with GORM log level Error, suitable for lower-noise production defaults.
+// NewMysqlClient returns a client configured with GORM log level Error, suitable for production workloads that prefer lower log volume.
 func NewMysqlClient(ctx context.Context, dsn string) (*MysqlClient, error) {
 	db, err := openDB(ctx, dsn, logger.Error)
 	if err != nil {
@@ -158,7 +158,7 @@ func NewMysqlClient(ctx context.Context, dsn string) (*MysqlClient, error) {
 	return mysqlClient, nil
 }
 
-// NewMysqlClientWithLog returns a client with GORM log level Info for detailed SQL tracing.
+// NewMysqlClientWithLog returns a client configured with GORM log level Info for detailed SQL tracing.
 func NewMysqlClientWithLog(ctx context.Context, dsn string) (*MysqlClient, error) {
 	gormDb, err := openDB(ctx, dsn, logger.Info)
 	if err != nil {
@@ -172,7 +172,7 @@ func NewMysqlClientWithLog(ctx context.Context, dsn string) (*MysqlClient, error
 	return mysqlClient, nil
 }
 
-// DB returns a context-bound *gorm.DB. When runMode is [DebugMode], the session runs with GORM Debug enabled.
+// DB returns a context-bound [gorm.DB]. When runMode is [DebugMode], the returned session has GORM Debug logging enabled.
 func (p *MysqlClient) DB(ctx context.Context, runMode string) *gorm.DB {
 	if runMode == DebugMode {
 		return p.db.WithContext(ctx).Debug()
@@ -181,8 +181,8 @@ func (p *MysqlClient) DB(ctx context.Context, runMode string) *gorm.DB {
 	return p.db.WithContext(ctx)
 }
 
-// Tx begins a transaction and returns *gorm.DB. The caller must Commit or Rollback the returned session.
-// When runMode is [DebugMode], the transaction uses GORM Debug.
+// Tx begins a transaction and returns a [gorm.DB]. The caller must Commit or Rollback the returned session.
+// When runMode is [DebugMode], the transaction is created with GORM Debug logging enabled.
 func (p *MysqlClient) Tx(ctx context.Context, runMode string) *gorm.DB {
 	if runMode == DebugMode {
 		return p.db.WithContext(ctx).Debug().Begin()

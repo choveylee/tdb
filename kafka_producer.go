@@ -25,7 +25,7 @@ func cloneSaramaConfig(config *sarama.Config) *sarama.Config {
 	return &cfg
 }
 
-// KafkaAsyncSender publishes JSON-encoded values to a fixed topic using a Sarama async producer.
+// KafkaAsyncSender publishes JSON-encoded messages to a fixed Kafka topic through a Sarama async producer.
 type KafkaAsyncSender struct {
 	producer sarama.AsyncProducer
 
@@ -60,7 +60,7 @@ func NewKafkaAsyncSender(ctx context.Context, addrs []string, config *sarama.Con
 // AsyncSenderSuccessCallback is invoked for each successful produce; the arguments are the encoded payload and any Encode error returned by the value encoder.
 type AsyncSenderSuccessCallback func([]byte, error)
 
-// AsyncSenderErrorCallback is invoked when the producer reports an error on the Errors channel.
+// AsyncSenderErrorCallback receives delivery errors emitted on the producer Errors channel.
 type AsyncSenderErrorCallback func(error)
 
 // NewKafkaAsyncSenderWithCallback constructs an async producer, enables Return.Successes and Return.Errors, and starts background listeners that invoke the supplied callbacks.
@@ -90,7 +90,7 @@ func NewKafkaAsyncSenderWithCallback(ctx context.Context, addrs []string, config
 			select {
 			case msg, ok := <-producer.Successes():
 				if !ok {
-					tlog.I(context.Background()).Msgf("Kafka producer success listener for topic %q has stopped because the producer was closed.", topic)
+					tlog.I(context.Background()).Msgf("Kafka producer success listener for topic %q stopped because the producer was closed.", topic)
 
 					return
 				}
@@ -111,7 +111,7 @@ func NewKafkaAsyncSenderWithCallback(ctx context.Context, addrs []string, config
 			select {
 			case err, ok := <-producer.Errors():
 				if !ok {
-					tlog.I(context.Background()).Msgf("Kafka producer error listener for topic %q has stopped because the producer was closed.", topic)
+					tlog.I(context.Background()).Msgf("Kafka producer error listener for topic %q stopped because the producer was closed.", topic)
 
 					return
 				}
@@ -126,7 +126,7 @@ func NewKafkaAsyncSenderWithCallback(ctx context.Context, addrs []string, config
 	return sender, nil
 }
 
-// Send marshals data to JSON and enqueues a producer message with the given key on the async input channel.
+// Send marshals data to JSON and enqueues a producer message with the supplied key on the async input channel.
 func (p *KafkaAsyncSender) Send(ctx context.Context, key string, data interface{}) error {
 	bytes, err := json.Marshal(data)
 	if err != nil {
@@ -156,14 +156,14 @@ func (p *KafkaAsyncSender) Close(ctx context.Context) error {
 	return err
 }
 
-// KafkaSyncSender publishes JSON-encoded values to a fixed topic using a Sarama sync producer.
+// KafkaSyncSender publishes JSON-encoded messages to a fixed Kafka topic through a Sarama sync producer.
 type KafkaSyncSender struct {
 	producer sarama.SyncProducer
 
 	topic string
 }
 
-// NewKafkaSyncSender constructs a sync producer for the given brokers and topic.
+// NewKafkaSyncSender constructs a sync producer for the specified brokers and topic.
 func NewKafkaSyncSender(ctx context.Context, addrs []string, config *sarama.Config, topic string) (*KafkaSyncSender, error) {
 	producer, err := newSyncProducer(addrs, config)
 	if err != nil {
