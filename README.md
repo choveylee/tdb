@@ -4,7 +4,7 @@
 
 ## Requirements
 
-- Go **1.25** or newer (see `go.mod`).
+- Go **1.27.4** or newer (see `go.mod`).
 
 ## Installation
 
@@ -34,10 +34,14 @@ The top-level package overview is defined in [`doc.go`](doc.go) and is written f
 
 ## Operational Notes
 
-- `KafkaReceiver.Start` blocks until the first consumer-group session is established. If startup fails before the initial session is ready, the method returns the corresponding error instead of blocking indefinitely.
-- `KafkaReceiver` passes the consumer-session context to message handlers so application code can stop promptly during shutdown or rebalance.
-- `MonthlyShardingByOid` and `MonthlyShardingByTime` derive monthly suffixes in `UTC`, which keeps shard selection deterministic across deployment time zones.
-- `NewKafkaAsyncSender` disables Sarama success and error result channels internally. Use `NewKafkaAsyncSenderWithCallback` when callback-based delivery notifications are required.
+- MySQL startup uses the caller's context and a five-second maximum. Close the pool with `MysqlClient.Close`. SQL logs keep placeholders for bound arguments. Bind sensitive values as parameters.
+- Redis pool gauges aggregate live clients. Closing a client removes its pool from the next sample and updates the gauges immediately.
+- `KafkaReceiver.Start` waits for the first consumer-group session and rejects a second concurrent start. That context controls the consume loop. Each handler attempt receives the session context and its own copy of the original message. Cancellation stops retries without marking the interrupted message. A `PermanentError` explicitly acknowledges the message without retrying. The receiver enables and logs Sarama's consumer-group error stream.
+- Kafka `Close` begins shutdown once. The supplied context bounds the caller's wait, and a later `Close` can wait for the same shutdown. Callers should let callbacks and receiver handlers return before expecting shutdown to finish.
+- Kafka constructors check context before opening connections. Configure Sarama's network timeouts and retry settings to bound broker discovery.
+- Async `Send` respects context cancellation while waiting for the input queue. Use `NewKafkaAsyncSenderWithCallback` for delivery notifications. A sync `Send` checks context before dispatch and uses Sarama's network timeouts and retry settings once dispatched.
+- Register `MonthlyShardingByOid` or `MonthlyShardingByTime` with `db.Use(...)`. Both return a `*tdb.MonthlySharding` plugin. Prepare each physical table before writing to it. Supply an ID explicitly or define auto-increment on each physical shard. Use explicit IDs when records need globally unique IDs across shards.
+- Logical-table operations require a single target month. Bind the sharding key with an equality predicate for reads, updates, and deletes. Insert batches must share a UTC month. Quote identifiers in raw SQL. For joins or other unsupported SQL shapes, address the physical tables explicitly. To deliberately access the original table, use `db.Set("sharding_ignore", true)` for that operation.
 
 ## Examples
 
@@ -48,8 +52,8 @@ client, err := tdb.NewMysqlClient(ctx, dsn)
 if err != nil {
     return err
 }
-db := client.DB(ctx, tdb.ReleaseMode)
-// Execute application queries with db.
+defer func() { _ = client.Close() }()
+database := client.DB(ctx, tdb.ReleaseMode)
 ```
 
 **Redis Client**
@@ -73,10 +77,15 @@ recv, err := tdb.NewKafkaReceiver(ctx, brokers, cfg, "my-group", "my-topic",
 if err != nil {
     return err
 }
+defer func() {
+    closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    _ = recv.Close(closeCtx)
+}()
 if err := recv.Start(ctx); err != nil {
     return err
 }
-defer func() { _ = recv.Close(ctx) }()
 ```
 
 ## Contributing

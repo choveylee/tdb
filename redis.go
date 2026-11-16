@@ -2,104 +2,162 @@ package tdb
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisClient wraps [redis.Client] and periodically exports connection-pool gauges from a background goroutine.
-// Call [RedisClient.Close] when the client is no longer needed to stop the reporter and release connections.
+// RedisClient owns a go-redis client and its registration in the pool metrics reporter.
 type RedisClient struct {
-	client *redis.Client
-
-	stop      chan struct{}
-	wg        sync.WaitGroup
+	client    *redis.Client
 	closeOnce sync.Once
+	closeErr  error
 }
 
-// NewRedisClient creates a client for logical database 0, verifies connectivity with Ping, and starts the metrics reporter goroutine.
+var redisPools = struct {
+	sync.Mutex
+	clientsMap map[*redis.Client]struct{}
+	stop       chan struct{}
+}{
+	clientsMap: make(map[*redis.Client]struct{}),
+}
+
+// NewRedisClient connects to logical database 0 and verifies connectivity with Ping.
 func NewRedisClient(ctx context.Context, address, password string, poolSize int) (*RedisClient, error) {
 	return newRedisClient(ctx, address, password, 0, poolSize)
 }
 
-// NewRedisClientEx behaves like [NewRedisClient] but selects the Redis logical database identified by db.
+// NewRedisClientEx connects to the requested Redis logical database.
 func NewRedisClientEx(ctx context.Context, address, password string, db int, poolSize int) (*RedisClient, error) {
 	return newRedisClient(ctx, address, password, db, poolSize)
 }
 
-func newRedisClient(ctx context.Context, address, password string, db int, poolSize int) (*RedisClient, error) {
-	client := redis.NewClient(&redis.Options{
-		Addr:     address,
-		Password: password,
-		DB:       db,
-		PoolSize: poolSize,
+// Close deregisters the pool and releases its connections. Concurrent callers
+// receive the result of the same underlying close.
+func (client *RedisClient) Close() error {
+	if client == nil || client.client == nil {
+		return nil
+	}
+
+	client.closeOnce.Do(func() {
+		redisPools.Lock()
+		delete(redisPools.clientsMap, client.client)
+		if len(redisPools.clientsMap) == 0 {
+			close(redisPools.stop)
+			redisPools.stop = nil
+		}
+
+		reportRedisPoolMetrics()
+		redisPools.Unlock()
+
+		if err := client.client.Close(); err != nil {
+			client.closeErr = fmt.Errorf("tdb: close Redis client: %w", err)
+		}
 	})
 
+	return client.closeErr
+}
+
+// Client returns the underlying client for Redis commands.
+func (client *RedisClient) Client() *redis.Client {
+	return client.client
+}
+
+// newRedisClient registers a pool only after a successful, bounded health check.
+func newRedisClient(ctx context.Context, address, password string, db int, poolSize int) (*RedisClient, error) {
+	if ctx == nil {
+		return nil, errors.New("tdb: context must not be nil")
+	}
+
+	if strings.TrimSpace(address) == "" {
+		return nil, errors.New("tdb: Redis address must not be empty")
+	}
+
+	if db < 0 || poolSize < 0 {
+		return nil, errors.New("tdb: Redis database index and pool size must be non-negative")
+	}
+
+	options := &redis.Options{
+		Addr:                  address,
+		Password:              password,
+		DB:                    db,
+		PoolSize:              poolSize,
+		ContextTimeoutEnabled: true,
+	}
+	client := redis.NewClient(options)
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := client.Ping(pingCtx).Result()
-	if err != nil {
+	if err := client.Ping(pingCtx).Err(); err != nil {
 		_ = client.Close()
-		return nil, err
+
+		return nil, fmt.Errorf("tdb: ping Redis: %w", err)
 	}
 
-	redisClient := &RedisClient{
-		client: client,
-		stop:   make(chan struct{}),
+	redisPools.Lock()
+	redisPools.clientsMap[client] = struct{}{}
+	if redisPools.stop == nil {
+		stop := make(chan struct{})
+		redisPools.stop = stop
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ticker.C:
+					redisPools.Lock()
+					if redisPools.stop != stop {
+						redisPools.Unlock()
+
+						return
+					}
+
+					reportRedisPoolMetrics()
+					redisPools.Unlock()
+				}
+			}
+		}()
 	}
 
-	redisClient.wg.Add(1)
+	reportRedisPoolMetrics()
+	redisPools.Unlock()
 
-	go redisClient.runPoolMetricsReporter()
+	redisClient := &RedisClient{client: client}
 
 	return redisClient, nil
 }
 
-func (p *RedisClient) runPoolMetricsReporter() {
-	defer p.wg.Done()
-
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-p.stop:
-			return
-		case <-ticker.C:
-			reportRedisPoolMetrics(p.client)
+// reportRedisPoolMetrics combines samples from the live pools. Callers hold redisPools.
+func reportRedisPoolMetrics() {
+	var hits, misses, timeouts, stale, idle, active uint64
+	for client := range redisPools.clientsMap {
+		stats := client.PoolStats()
+		hits += uint64(stats.Hits)
+		misses += uint64(stats.Misses)
+		timeouts += uint64(stats.Timeouts)
+		stale += uint64(stats.StaleConns)
+		idle += uint64(stats.IdleConns)
+		if stats.TotalConns > stats.IdleConns {
+			active += uint64(stats.TotalConns - stats.IdleConns)
 		}
 	}
-}
 
-func reportRedisPoolMetrics(client *redis.Client) {
-	poolStats := client.PoolStats()
+	if RedisPoolOpGauge != nil {
+		_ = RedisPoolOpGauge.Set(float64(hits), "hit")
+		_ = RedisPoolOpGauge.Set(float64(misses), "miss")
+		_ = RedisPoolOpGauge.Set(float64(timeouts), "timeout")
+		_ = RedisPoolOpGauge.Set(float64(stale), "stale")
+	}
 
-	RedisPoolOpGauge.Set(float64(poolStats.Hits), "hit")
-	RedisPoolOpGauge.Set(float64(poolStats.Misses), "miss")
-	RedisPoolOpGauge.Set(float64(poolStats.Timeouts), "timeout")
-	RedisPoolOpGauge.Set(float64(poolStats.StaleConns), "stale")
-	RedisConnStatusGauge.Set(float64(poolStats.IdleConns), "idle")
-	RedisConnStatusGauge.Set(float64(poolStats.TotalConns-poolStats.IdleConns), "active")
-}
-
-// Close stops the metrics reporter, closes the underlying Redis client, and may be called safely more than once.
-func (p *RedisClient) Close() error {
-	var err error
-
-	p.closeOnce.Do(func() {
-		close(p.stop)
-
-		p.wg.Wait()
-
-		err = p.client.Close()
-	})
-
-	return err
-}
-
-// Client returns the underlying [redis.Client].
-func (p *RedisClient) Client() *redis.Client {
-	return p.client
+	if RedisConnStatusGauge != nil {
+		_ = RedisConnStatusGauge.Set(float64(idle), "idle")
+		_ = RedisConnStatusGauge.Set(float64(active), "active")
+	}
 }
