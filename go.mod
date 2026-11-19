@@ -5,7 +5,7 @@ go 1.27.4
 require (
 	github.com/IBM/sarama v1.61.1
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/choveylee/tlog v0.0.0-20261116080341-5b72778fcc36
+	github.com/choveylee/tlog v0.0.0-20261119020720-3f6672c90890
 	github.com/choveylee/tmetric v0.0.0-20261115145406-134cef5db860
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/longbridgeapp/sqlparser v0.3.2
@@ -23,7 +23,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/choveylee/tcfg v0.0.0-20261115144344-16ce68da5110 // indirect
 	github.com/choveylee/terror v0.0.0-20261115114137-e79937fc25fd // indirect
-	github.com/choveylee/ttrace v0.0.0-20261116234142-05d7c218b32b // indirect
+	github.com/choveylee/ttrace v0.0.0-20261119020621-26f9d63b2ae1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/eapache/go-resiliency v1.7.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
