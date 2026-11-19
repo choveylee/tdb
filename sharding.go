@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -31,6 +32,7 @@ func MonthlyShardingByOid(shardingKey string, tables []string) *MonthlySharding 
 }
 
 // MonthlyShardingByTime routes each configured table by the UTC month of its time key.
+// Times that could round into another month at second precision are rejected.
 // Supply the primary key in the insert or configure auto-increment on the shard.
 func MonthlyShardingByTime(shardingKey string, tables []string) *MonthlySharding {
 	return registerMonthlySharding(shardingKey, tables, monthlyShardingAlgorithmByTime)
@@ -136,7 +138,15 @@ func monthlyShardingAlgorithmByTime(value any) (string, error) {
 		return "", fmt.Errorf("tdb: time sharding key must be a time.Time, got %T", value)
 	}
 
-	return "_" + shardingTime.UTC().Format("200601"), nil
+	utcTime := shardingTime.UTC()
+	roundedTime := utcTime.Round(time.Second)
+	// DATETIME without fractional precision can round up into another month.
+	// Reject that boundary when the column precision and SQL mode are unknown.
+	if utcTime.Year() != roundedTime.Year() || utcTime.Month() != roundedTime.Month() {
+		return "", errors.New("tdb: time sharding key must not round into another month at second precision")
+	}
+
+	return "_" + utcTime.Format("200601"), nil
 }
 
 // monthlyShardingPool rewrites SQL on the active GORM connection or transaction.

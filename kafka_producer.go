@@ -66,6 +66,7 @@ func (sender *KafkaAsyncSender) Send(ctx context.Context, key string, data any) 
 	if err := lifecycle.admit(ctx); err != nil {
 		return err
 	}
+
 	defer lifecycle.sends.Done()
 
 	select {
@@ -147,6 +148,7 @@ func (sender *KafkaSyncSender) Send(ctx context.Context, key string, data any) (
 	if err := lifecycle.admit(ctx); err != nil {
 		return -1, -1, err
 	}
+
 	defer lifecycle.sends.Done()
 
 	partition, offset, err := sender.producer.SendMessage(message)

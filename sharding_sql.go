@@ -51,6 +51,7 @@ func (plugin *MonthlySharding) route(query string, arguments []any) (routedQuery
 	var target *sqlparser.TableName
 	var condition sqlparser.Expr
 	var insert *sqlparser.InsertStatement
+	var assignments []*sqlparser.Assignment
 	switch parsed := statement.(type) {
 	case *sqlparser.SelectStatement:
 		if parsed.Hint != nil && parsed.Hint.Value == "nosharding" {
@@ -61,6 +62,7 @@ func (plugin *MonthlySharding) route(query string, arguments []any) (routedQuery
 		condition = parsed.Condition
 	case *sqlparser.UpdateStatement:
 		target, condition = parsed.TableName, parsed.Condition
+		assignments = parsed.Assignments
 		if len(parsed.FromList) > 0 {
 			return "", errors.New("tdb: SQL form does not support monthly sharding")
 		}
@@ -73,6 +75,9 @@ func (plugin *MonthlySharding) route(query string, arguments []any) (routedQuery
 
 	case *sqlparser.InsertStatement:
 		target, insert = parsed.TableName, parsed
+		if parsed.UpsertClause != nil {
+			assignments = parsed.UpsertClause.Assignments
+		}
 	}
 
 	tableCount, configured := 0, false
@@ -112,7 +117,50 @@ func (plugin *MonthlySharding) route(query string, arguments []any) (routedQuery
 		return "", fmt.Errorf("tdb: monthly sharding requires equality on %q", plugin.key)
 	}
 
+	if err := plugin.validateAssignments(assignments, target.TableName(), suffix, arguments); err != nil {
+		return "", err
+	}
+
 	return appendShardSuffix(query, tokens, target, suffix)
+}
+
+// validateAssignments prevents a successful write from stranding a row in the wrong month.
+// Self-assignment preserves the routed month. Other expressions
+// must resolve to a concrete value in that same month before the query is sent.
+func (plugin *MonthlySharding) validateAssignments(assignments []*sqlparser.Assignment, tableName, suffix string, arguments []any) error {
+	for _, assignment := range assignments {
+		for _, column := range assignment.Columns {
+			if !strings.EqualFold(column.Name, plugin.key) {
+				continue
+			}
+
+			if len(assignment.Columns) != 1 {
+				return errors.New("tdb: monthly sharding key must not use a tuple assignment")
+			}
+
+			switch expression := assignment.Expr.(type) {
+			case *sqlparser.Ident:
+				if strings.EqualFold(expression.Name, plugin.key) {
+					continue
+				}
+			case *sqlparser.QualifiedRef:
+				if strings.EqualFold(expression.Table.Name, tableName) && strings.EqualFold(expression.Column.Name, plugin.key) {
+					continue
+				}
+			}
+
+			updatedSuffix, err := plugin.valueSuffix(assignment.Expr, arguments)
+			if err != nil {
+				return fmt.Errorf("tdb: validate monthly sharding key assignment: %w", err)
+			}
+
+			if updatedSuffix != suffix {
+				return errors.New("tdb: monthly sharding key update must stay in the routed month")
+			}
+		}
+	}
+
+	return nil
 }
 
 // scanSQL identifies possible logical table references and rejects executable

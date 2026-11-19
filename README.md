@@ -91,3 +91,5 @@ if err := recv.Start(ctx); err != nil {
 ## Contributing
 
 Follow standard Go conventions, including `gofmt`, focused commits, and clear exported API documentation. Package comments and exported identifiers should remain documented in **English** to preserve compatibility with `go doc`.
+
+Monthly time sharding rejects times that could round into another UTC month at whole-second precision. This conservative boundary check protects DATETIME columns with unknown precision and SQL mode, including inserts and upsert/update assignments. Other fractional values are preserved. Normalize boundary timestamps explicitly before calling if required.

@@ -23,7 +23,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/choveylee/tcfg v0.0.0-20261115144344-16ce68da5110 // indirect
 	github.com/choveylee/terror v0.0.0-20261115114137-e79937fc25fd // indirect
-	github.com/choveylee/ttrace v0.0.0-20261116014058-a02a1ddd5db7 // indirect
+	github.com/choveylee/ttrace v0.0.0-20261116234142-05d7c218b32b // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/eapache/go-resiliency v1.7.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect

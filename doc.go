@@ -28,6 +28,10 @@
 // to route a logical table to one UTC month. Create the physical shards in
 // advance and supply a primary key or configure auto-increment on each shard.
 // Address physical tables directly for joins or other SQL shapes that need them.
+// Time keys that could round across a month boundary at second precision are rejected,
+// regardless of column precision. Other fractional values keep their original precision.
+// Updates, including upsert assignments, must preserve the routed month. Moving
+// records between physical shards requires an explicit application transaction.
 //
 // # Metrics
 //
